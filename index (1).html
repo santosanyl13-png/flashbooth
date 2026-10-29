@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlashBooth Pro — Control Station</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- QRCode.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- Google Identity Services (used for "Save to Google Drive") -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <style>
+    .flash-overlay {
+      animation: flash-anim 0.4s ease-out forwards;
+    }
+    @keyframes flash-anim {
+      0% { opacity: 1; background-color: white; }
+      100% { opacity: 0; background-color: transparent; }
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <!-- Navigation Bar -->
+  <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between shadow-md">
+    <div class="flex items-center space-x-3">
+      <i class="fa-solid fa-camera-retro text-emerald-400 text-3xl"></i>
+      <h1 class="text-2xl font-bold tracking-wide text-white">FlashBooth <span class="text-emerald-400">Pro</span></h1>
+    </div>
+    <div class="flex items-center space-x-3">
+      <!-- Mode Toggle Switch -->
+      <div class="bg-slate-900 p-1 rounded-xl border border-slate-700 flex items-center text-xs font-semibold">
+        <button id="modeWireless" onclick="setConnectionMode('wireless')" class="px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5">
+          <i class="fa-solid fa-wifi"></i> Wireless (High-Res)
+        </button>
+        <button id="modeWired" onclick="setConnectionMode('wired')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5">
+          <i class="fa-solid fa-plug text-emerald-400"></i> USB / DroidCam
+        </button>
+      </div>
+
+      <span id="connectionBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+        <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span> Disconnected
+      </span>
+      
+      <button id="btnConnectPhone" onclick="handleConnectAction()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-lg text-sm transition flex items-center gap-2 shadow">
+        <i class="fa-solid fa-qrcode" id="connectBtnIcon"></i> <span id="connectBtnText">Connect Phone</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid Dashboard -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    
+    <!-- Left Column: Camera Preview & Interactive Controls (7 Cols) -->
+    <section class="lg:col-span-7 flex flex-col gap-4">
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-xl flex flex-col relative">
+        
+        <!-- Camera Viewport Header -->
+        <div class="p-4 border-b border-slate-700/60 flex items-center justify-between bg-slate-800/80">
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-video text-slate-400"></i>
+            <span class="font-semibold text-sm text-slate-200" id="streamTypeLabel">Live Wireless HD Stream</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <!-- Grid Toggle Button -->
+            <button onclick="toggleGrid()" id="btnToggleGrid" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow" title="Toggle 3x3 Alignment Grid">
+              <i class="fa-solid fa-table-cells"></i> <span id="gridBtnText">Grid: Off</span>
+            </button>
+            <div id="poseProgress" class="text-xs font-medium px-2.5 py-1 rounded bg-slate-700 text-slate-300">
+              Upload template with green boxes
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Viewport -->
+        <div class="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+          <video id="remoteVideo" autoplay playsinline muted class="w-full h-full object-cover"></video>
+          
+          <!-- 3x3 Rule-of-Thirds Grid Overlay -->
+          <div id="gridOverlay" class="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 opacity-60 hidden z-15">
+            <div class="border-r border-b border-white/50"></div>
+            <div class="border-r border-b border-white/50"></div>
+            <div class="border-b border-white/50"></div>
+            <div class="border-r border-b border-white/50"></div>
+            <div class="border-r border-b border-white/50"></div>
+            <div class="border-b border-white/50"></div>
+            <div class="border-r border-b border-white/50"></div>
+            <div class="border-r border-b border-white/50"></div>
+            <div class=""></div>
+          </div>
+
+          <!-- Countdown Overlay with Cancel Button -->
+          <div id="countdownOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm hidden z-20">
+            <span id="countdownText" class="text-9xl font-extrabold text-white drop-shadow-lg animate-bounce">3</span>
+            <button onclick="cancelCountdownSession()" class="mt-6 px-6 py-2.5 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-xl text-sm shadow-lg transition flex items-center gap-2 pointer-events-auto">
+              <i class="fa-solid fa-xmark"></i> Cancel Session
+            </button>
+          </div>
+
+          <!-- PC Ring Light & Flash Effect Overlay -->
+          <div id="flashEffect" class="absolute inset-0 pointer-events-none hidden z-10 transition-opacity duration-200"></div>
+
+          <!-- Video Placeholder / Disconnected state -->
+          <div id="videoPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/80">
+            <i class="fa-solid fa-plug-circle-xmark text-5xl text-slate-600 mb-3 animate-pulse"></i>
+            <p class="text-slate-300 font-medium">No Camera Connected</p>
+            <p class="text-xs text-slate-500 mt-1 max-w-sm">Click "Connect Phone" above to scan QR code (Wireless) or select USB Camera.</p>
+          </div>
+        </div>
+
+        <!-- Session Trigger Bar -->
+        <div class="p-4 bg-slate-800 flex items-center justify-between gap-4">
+          <button id="btnStartSession" onclick="startPhotoboothSession()" disabled class="w-full py-3 px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-lg">
+            <i class="fa-solid fa-play"></i> Start Photobooth Session
+          </button>
+          <button id="btnResetSession" onclick="resetSession()" class="py-3 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-xl transition text-sm flex items-center gap-2">
+            <i class="fa-solid fa-rotate-right"></i> Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Customization Options -->
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 p-5 shadow-xl space-y-4">
+        <h3 class="text-base font-semibold text-slate-200 border-b border-slate-700 pb-2 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-emerald-400"></i> Strip Settings & Customization
+        </h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Canvas Size Configuration -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Canvas Format Size</label>
+            <select id="stripSizeSelect" onchange="changeCanvasDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+              <option value="2x6">2x6 Strip (600 x 1500)</option>
+              <option value="4x6">4x6 Postcard (1200 x 1800)</option>
+              <option value="square">Square Grid (1200 x 1200)</option>
+              <option value="custom">Custom Pixel Dimensions</option>
+            </select>
+          </div>
+
+          <!-- Custom Event/Branding Text -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Event Title / Branding</label>
+            <input type="text" id="brandingInput" value="FlashBooth Pro 2026" oninput="renderStripCanvas()" placeholder="e.g. Wedding" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+        </div>
+
+        <!-- Custom Width & Height Inputs -->
+        <div id="customDimensionsGroup" class="pt-2 border-t border-slate-700/60 hidden grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-emerald-400 mb-1 uppercase tracking-wider">Custom Width (px)</label>
+            <input type="number" id="customWidthInput" value="600" min="100" max="4000" onchange="changeCanvasDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-emerald-400 mb-1 uppercase tracking-wider">Custom Height (px)</label>
+            <input type="number" id="customHeightInput" value="1500" min="100" max="4000" onchange="changeCanvasDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+        </div>
+
+        <!-- Custom Strip Design Template Upload with Auto-Green Box Detection -->
+        <div class="pt-2 border-t border-slate-700/60">
+          <label class="block text-xs font-semibold text-emerald-400 mb-2 uppercase tracking-wider">
+            <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Upload Template (Auto-Detects Green Boxes as Slots)
+          </label>
+          <div class="flex items-center gap-3">
+            <input type="file" id="customTemplateInput" accept="image/png, image/jpeg" onchange="handleCustomTemplateUpload(event)" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer">
+            <button onclick="clearCustomTemplate()" id="btnClearTemplate" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition shrink-0 hidden" title="Remove Template">
+              <i class="fa-solid fa-trash"></i> Clear
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Final Photo Strip Preview & Auto-Detected Slots (5 Cols) -->
+    <section class="lg:col-span-5 flex flex-col gap-4">
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 p-5 shadow-xl flex flex-col items-center flex-1">
+        <h3 class="text-base font-semibold text-slate-200 mb-2 w-full text-left border-b border-slate-700 pb-2 flex items-center justify-between">
+          <span><i class="fa-solid fa-images text-emerald-400 mr-2"></i> Template Preview & Slots</span>
+          <span class="text-xs font-normal text-emerald-400 font-semibold" id="slotCountLabel">0 Green Slots Detected</span>
+        </h3>
+
+        <div class="flex items-center justify-between w-full mb-2">
+          <p class="text-[11px] text-slate-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-circle-info text-emerald-400"></i> Green boxes on template are scanned top to bottom as Slots A, B, C...
+          </p>
+        </div>
+
+        <!-- Canvas Render Container -->
+        <div class="w-full flex justify-center py-2 items-center bg-slate-950/50 rounded-xl border border-slate-800 p-3">
+          <canvas id="stripCanvas" class="max-h-[420px] w-auto shadow-2xl rounded border border-slate-700/50"></canvas>
+        </div>
+
+        <!-- Export & Print Buttons -->
+        <div class="w-full mt-4 space-y-2">
+          <!-- Print Button (Format-Based) -->
+          <button id="btnPrint" onclick="printStrip()" disabled class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg shadow transition flex items-center justify-center gap-2 text-sm">
+            <i class="fa-solid fa-print"></i> Print Photo Strip (Format Size)
+          </button>
+
+          <button id="btnDownload" onclick="downloadStrip()" disabled class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg shadow transition flex items-center justify-center gap-2 text-sm">
+            <i class="fa-solid fa-download"></i> Download PNG (Lossless)
+          </button>
+          
+          <button id="btnUploadDrive" onclick="uploadToGoogleDrive()" disabled class="w-full py-2.5 px-4 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg border border-slate-600 transition flex items-center justify-center gap-2 text-sm">
+            <i class="fa-brands fa-google-drive text-emerald-400"></i> Save to Google Drive
+          </button>
+        </div>
+
+        <!-- Drive Status Message -->
+        <div id="driveStatusMsg" class="mt-3 text-xs text-center hidden"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: QR Code & Wireless Pairing -->
+  <div id="qrModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative">
+      <button onclick="closeConnectModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white flex items-center gap-2">
+        <i class="fa-solid fa-qrcode text-emerald-400"></i> Connect Wireless Camera
+      </h3>
+
+      <div class="bg-white p-4 rounded-xl flex justify-center items-center mx-auto shadow-inner w-56 h-56">
+        <div id="qrcode"></div>
+      </div>
+
+      <div class="text-xs text-slate-300 space-y-2 text-center">
+        <p class="font-medium text-slate-200">1. Scan QR code using your phone camera.</p>
+        <p class="text-slate-400">2. Allow camera access when your phone asks.</p>
+      </div>
+
+      <div class="pt-2 border-t border-slate-700 space-y-2">
+        <label class="block text-xs text-slate-400 font-semibold">Direct Mobile Link:</label>
+        <div class="flex items-center gap-2">
+          <input type="text" id="mobileLinkInput" readonly class="bg-slate-900 border border-slate-700 text-xs text-slate-300 px-3 py-2 rounded-lg w-full focus:outline-none select-all">
+          <button onclick="copyMobileLink()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-2 rounded-lg transition shrink-0">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: USB Camera Selector -->
+  <div id="usbModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative">
+      <button onclick="closeUsbModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white flex items-center gap-2">
+        <i class="fa-solid fa-plug text-emerald-400"></i> USB / DroidCam Camera Selection
+      </h3>
+
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Select your DroidCam or USB phone camera device from the list below.
+      </p>
+
+      <div class="space-y-2">
+        <label class="block text-xs font-semibold text-slate-400">Available Camera Devices:</label>
+        <select id="usbCameraSelect" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          <option value="">Click below to scan cameras...</option>
+        </select>
+      </div>
+
+      <div class="pt-3 border-t border-slate-700 flex items-center justify-between">
+        <button onclick="openUsbModal()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg flex items-center gap-1">
+          <i class="fa-solid fa-rotate-right"></i> Refresh List
+        </button>
+        <div class="flex gap-2">
+          <button onclick="closeUsbModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg">Cancel</button>
+          <button onclick="startUsbCameraStream()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5">
+            <i class="fa-solid fa-video"></i> Start Camera
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC Control JS Logic -->
+  <script>
+    /* =====================================================================
+       CONFIG  (replaces Code.gs)
+       ===================================================================== */
+
+    // Your mobile camera page (already hosted on GitHub Pages)
+    const MOBILE_CAMERA_PAGE_URL = "https://santosanyl13-png.github.io/flashbooth-mobile/";
+
+    // "Save to Google Drive" needs a Google OAuth Web Client ID.
+    // Leave empty to hide the button. See the setup steps provided with this file.
+    const GOOGLE_CLIENT_ID = "";
+
+    // Drive folder that strips are saved into (created automatically)
+    const DRIVE_FOLDER_NAME = "Photobooth Uploads";
+
+    /* ===================================================================== */
+
+    let connectionMode = 'wireless';
+    let peer = null;
+    let currentCall = null;
+    let dataConnection = null;
+    let localUsbStream = null;
+    let hostPeerId = '';
+    let isConnected = false;
+    let isGridVisible = false;
+    let countdownTimer = null;
+    
+    let acceptedPhotos = [];
+    let customSlots = []; 
+    let currentPoseIndex = 0;
+    let isCapturingSequence = false;
+    let customTemplateImage = null;
+
+    let defaultZoom = 1.01;
+
+    let currentCanvasConfig = {
+      width: 600,
+      height: 1500
+    };
+
+    const remoteVideo = document.getElementById('remoteVideo');
+    const videoPlaceholder = document.getElementById('videoPlaceholder');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const btnStartSession = document.getElementById('btnStartSession');
+    const poseProgress = document.getElementById('poseProgress');
+    const slotCountLabel = document.getElementById('slotCountLabel');
+    const countdownOverlay = document.getElementById('countdownOverlay');
+    const countdownText = document.getElementById('countdownText');
+    const flashEffect = document.getElementById('flashEffect');
+    const stripCanvas = document.getElementById('stripCanvas');
+    const btnPrint = document.getElementById('btnPrint');
+    const btnDownload = document.getElementById('btnDownload');
+    const btnUploadDrive = document.getElementById('btnUploadDrive');
+
+    window.addEventListener('DOMContentLoaded', () => {
+      // Hide the Drive button if no Google Client ID has been configured
+      if (!GOOGLE_CLIENT_ID) {
+        btnUploadDrive.classList.add('hidden');
+      }
+      initBlankCanvas();
+      loadSavedFramingSettings();
+    });
+
+    function loadSavedFramingSettings() {
+      try {
+        const savedZoom = localStorage.getItem('fb_saved_zoom');
+        if (savedZoom !== null) defaultZoom = parseFloat(savedZoom);
+      } catch (e) { /* storage unavailable */ }
+    }
+
+    function saveFramingSettings() {
+      try {
+        if (acceptedPhotos.length > 0) {
+          localStorage.setItem('fb_saved_zoom', acceptedPhotos[0].zoom || 1.01);
+        }
+      } catch (e) { /* storage unavailable */ }
+    }
+
+    function makeFileName() {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      return `FlashBooth_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.png`;
+    }
+
+    function changeCanvasDimensions() {
+      const format = document.getElementById('stripSizeSelect').value;
+      const customGroup = document.getElementById('customDimensionsGroup');
+
+      if (format === '2x6') {
+        customGroup.classList.add('hidden');
+        currentCanvasConfig = { width: 600, height: 1500 };
+      } else if (format === '4x6') {
+        customGroup.classList.add('hidden');
+        currentCanvasConfig = { width: 1200, height: 1800 };
+      } else if (format === 'square') {
+        customGroup.classList.add('hidden');
+        currentCanvasConfig = { width: 1200, height: 1200 };
+      } else if (format === 'custom') {
+        customGroup.classList.remove('hidden');
+        const customW = parseInt(document.getElementById('customWidthInput').value) || 600;
+        const customH = parseInt(document.getElementById('customHeightInput').value) || 1500;
+        currentCanvasConfig = { width: customW, height: customH };
+      }
+
+      resetSession();
+    }
+
+    function toggleGrid() {
+      isGridVisible = !isGridVisible;
+      const gridOverlay = document.getElementById('gridOverlay');
+      const gridBtnText = document.getElementById('gridBtnText');
+      const btnToggleGrid = document.getElementById('btnToggleGrid');
+      
+      if (isGridVisible) {
+        gridOverlay.classList.remove('hidden');
+        gridBtnText.innerText = "Grid: On";
+        btnToggleGrid.className = "text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow";
+      } else {
+        gridOverlay.classList.add('hidden');
+        gridBtnText.innerText = "Grid: Off";
+        btnToggleGrid.className = "text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow";
+      }
+    }
+
+    function playBeep(freq = 440, duration = 150) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.value = freq;
+
+        gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + (duration / 1000));
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + (duration / 1000));
+      } catch (e) {
+        console.log('Audio context not allowed or supported yet', e);
+      }
+    }
+
+    function handleCustomTemplateUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          canvas.width = currentCanvasConfig.width;
+          canvas.height = currentCanvasConfig.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imgData.data;
+          const width = canvas.width;
+          const height = canvas.height;
+
+          const greenMap = new Uint8Array(width * height);
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const idx = (y * width + x) * 4;
+              const r = data[idx];
+              const g = data[idx + 1];
+              const b = data[idx + 2];
+              const a = data[idx + 3];
+
+              if (a > 128 && g > 90 && g > r + 30 && g > b + 30) {
+                greenMap[y * width + x] = 1;
+                data[idx + 3] = 0; // Make green transparent
+              }
+            }
+          }
+
+          ctx.putImageData(imgData, 0, 0);
+
+          const processedImg = new Image();
+          processedImg.onload = function() {
+            customTemplateImage = processedImg;
+            document.getElementById('btnClearTemplate').classList.remove('hidden');
+            extractSlotsFromGreenMap(greenMap, width, height);
+          };
+          processedImg.src = canvas.toDataURL('image/png');
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function extractSlotsFromGreenMap(greenMap, width, height) {
+      const visited = new Uint8Array(width * height);
+      let foundBoxes = [];
+      const minBoxWidth = 40;
+      const minBoxHeight = 40;
+
+      for (let y = 0; y < height; y += 4) {
+        for (let x = 0; x < width; x += 4) {
+          if (greenMap[y * width + x] === 1 && visited[y * width + x] === 0) {
+            let minX = x, maxX = x, minY = y, maxY = y;
+            let queue = [[x, y]];
+            visited[y * width + x] = 1;
+            let count = 0;
+
+            while (queue.length > 0 && queue.length < 100000) {
+              let [cx, cy] = queue.pop();
+              count++;
+
+              if (cx < minX) minX = cx;
+              if (cx > maxX) maxX = cx;
+              if (cy < minY) minY = cy;
+              if (cy > maxY) maxY = cy;
+
+              let neighbors = [[cx+4, cy], [cx-4, cy], [cx, cy+4], [cx, cy-4]];
+              for (let [nx, ny] of neighbors) {
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  let nIdx = ny * width + nx;
+                  if (greenMap[nIdx] === 1 && visited[nIdx] === 0) {
+                    visited[nIdx] = 1;
+                    queue.push([nx, ny]);
+                  }
+                }
+              }
+            }
+
+            let boxW = maxX - minX;
+            let boxH = maxY - minY;
+            if (boxW >= minBoxWidth && boxH >= minBoxHeight && count > 150) {
+              foundBoxes.push({ x: minX, y: minY, w: boxW, h: boxH });
+            }
+          }
+        }
+      }
+
+      foundBoxes.sort((a, b) => a.y - b.y);
+      customSlots = foundBoxes;
+      slotCountLabel.innerText = `${customSlots.length} Green Slots Detected`;
+      poseProgress.innerText = customSlots.length > 0 ? `${customSlots.length} Slots Ready from Template` : "No green boxes found!";
+      
+      if (customSlots.length > 0 && isConnected) {
+        btnStartSession.disabled = false;
+      }
+
+      renderStripCanvas();
+    }
+
+    function clearCustomTemplate() {
+      customTemplateImage = null;
+      customSlots = [];
+      document.getElementById('customTemplateInput').value = '';
+      document.getElementById('btnClearTemplate').classList.add('hidden');
+      slotCountLabel.innerText = "0 Green Slots Detected";
+      poseProgress.innerText = "Upload template with green boxes";
+      btnStartSession.disabled = true;
+      renderStripCanvas();
+    }
+
+    function setConnectionMode(mode) {
+      connectionMode = mode;
+      const btnWireless = document.getElementById('modeWireless');
+      const btnWired = document.getElementById('modeWired');
+      const connectBtnText = document.getElementById('connectBtnText');
+      const connectBtnIcon = document.getElementById('connectBtnIcon');
+      const streamTypeLabel = document.getElementById('streamTypeLabel');
+
+      if (mode === 'wireless') {
+        btnWireless.className = "px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5";
+        btnWired.className = "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5";
+        connectBtnText.innerText = "Connect Phone";
+        connectBtnIcon.className = "fa-solid fa-qrcode";
+        streamTypeLabel.innerText = "Live Wireless HD Stream (1080p)";
+      } else {
+        btnWired.className = "px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5";
+        btnWireless.className = "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5";
+        connectBtnText.innerText = "Select Camera";
+        connectBtnIcon.className = "fa-solid fa-plug";
+        streamTypeLabel.innerText = "USB / DroidCam Camera Stream";
+      }
+
+      resetSession();
+    }
+
+    function handleConnectAction() {
+      if (connectionMode === 'wireless') {
+        openConnectModal();
+      } else {
+        openUsbModal();
+      }
+    }
+
+    async function openUsbModal() {
+      document.getElementById('usbModal').classList.remove('hidden');
+      const select = document.getElementById('usbCameraSelect');
+      select.innerHTML = '<option value="">Requesting camera access & scanning...</option>';
+
+      try {
+        // Explicitly prompt user for permission before enumerating devices
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        tempStream.getTracks().forEach(t => t.stop());
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        select.innerHTML = '';
+        if (videoDevices.length === 0) {
+          select.innerHTML = '<option value="">No cameras found!</option>';
+          return;
+        }
+
+        videoDevices.forEach((dev, idx) => {
+          const opt = document.createElement('option');
+          opt.value = dev.deviceId;
+          const label = dev.label ? dev.label : `Camera Device ${idx + 1} (${dev.deviceId.slice(0, 6)}...)`;
+          opt.innerText = label;
+          select.appendChild(opt);
+        });
+      } catch (err) {
+        select.innerHTML = `<option value="">Permission error: ${err.message || err.name}</option>`;
+        console.error("Camera access error:", err);
+      }
+    }
+
+    function closeUsbModal() {
+      document.getElementById('usbModal').classList.add('hidden');
+    }
+
+    async function startUsbCameraStream() {
+      const select = document.getElementById('usbCameraSelect');
+      const deviceId = select.value;
+      if (!deviceId) return;
+
+      if (localUsbStream) {
+        localUsbStream.getTracks().forEach(t => t.stop());
+      }
+
+      try {
+        localUsbStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: deviceId },
+            width: { ideal: 1920, max: 3840 },
+            height: { ideal: 1080, max: 2160 }
+          },
+          audio: false
+        });
+
+        remoteVideo.srcObject = localUsbStream;
+        await remoteVideo.play();
+        setConnectionStatus(true);
+        closeUsbModal();
+      } catch (err) {
+        alert("Failed to start camera: " + err.message);
+      }
+    }
+
+    function openConnectModal() {
+      document.getElementById('qrModal').classList.remove('hidden');
+
+      if (!peer || peer.destroyed) {
+        const randStr = Math.random().toString(36).substring(2, 8);
+        hostPeerId = 'fb-' + randStr;
+
+        peer = new Peer(hostPeerId, {
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'turn:openrelay.metered.ca:80', username: 'openrelay', credential: 'openrelay' },
+              { urls: 'turn:openrelay.metered.ca:443', username: 'openrelay', credential: 'openrelay' }
+            ]
+          }
+        });
+
+        peer.on('open', (id) => generatePairingQR(id));
+
+        peer.on('connection', (conn) => {
+          dataConnection = conn;
+          conn.on('data', (packet) => {
+            if (packet.type === 'HIGH_RES_PHOTO') {
+              addCapturedPhoto(packet.data);
+            }
+          });
+        });
+
+        peer.on('call', (call) => {
+          currentCall = call;
+          call.answer(null);
+
+          call.on('stream', (remoteStream) => {
+            remoteVideo.srcObject = remoteStream;
+            remoteVideo.play().catch(e => console.log('Autoplay error:', e));
+            setConnectionStatus(true);
+            closeConnectModal();
+          });
+
+          call.on('close', () => setConnectionStatus(false));
+          call.on('error', () => setConnectionStatus(false));
+        });
+
+        peer.on('disconnected', () => setConnectionStatus(false));
+      } else {
+        generatePairingQR(hostPeerId);
+      }
+    }
+
+    function closeConnectModal() {
+      document.getElementById('qrModal').classList.add('hidden');
+    }
+
+    function generatePairingQR(id) {
+      let baseUrl = MOBILE_CAMERA_PAGE_URL || "";
+      if (!baseUrl || baseUrl.includes("YOUR-USERNAME")) {
+        alert("Config Error: MOBILE_CAMERA_PAGE_URL is not set at the top of the script in index.html!");
+        return;
+      }
+
+      if (!baseUrl.endsWith('/') && !baseUrl.includes('.html')) {
+        baseUrl += '/';
+      }
+
+      const fullUrl = new URL(baseUrl);
+      fullUrl.searchParams.set('roomId', id);
+
+      const mobileUrl = fullUrl.toString();
+      document.getElementById('mobileLinkInput').value = mobileUrl;
+
+      const qrContainer = document.getElementById('qrcode');
+      qrContainer.innerHTML = '';
+      new QRCode(qrContainer, {
+        text: mobileUrl,
+        width: 190,
+        height: 190,
+        colorDark : "#0f172a",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.H
+      });
+    }
+
+    function copyMobileLink() {
+      const input = document.getElementById('mobileLinkInput');
+      input.select();
+      navigator.clipboard.writeText(input.value);
+      alert("Mobile link copied!");
+    }
+
+    function setConnectionStatus(connected) {
+      isConnected = connected;
+      if (connected) {
+        connectionBadge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+        connectionBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${connectionMode === 'wireless' ? 'Wireless HD Connected (1080p)' : 'Camera Connected'}`;
+        videoPlaceholder.classList.add('hidden');
+        if (customSlots.length > 0 && acceptedPhotos.length < customSlots.length) {
+          btnStartSession.disabled = false;
+        }
+      } else {
+        connectionBadge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30";
+        connectionBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span> Disconnected`;
+        videoPlaceholder.classList.add('hidden');
+        btnStartSession.disabled = true;
+      }
+    }
+
+    function startPhotoboothSession() {
+      if (!isConnected || isCapturingSequence || customSlots.length === 0) return;
+      acceptedPhotos = [];
+      currentPoseIndex = 0;
+      isCapturingSequence = true;
+      btnStartSession.disabled = true;
+      updatePoseIndicator();
+      triggerCountdownAndCapture();
+    }
+
+    function updatePoseIndicator() {
+      const slotLetter = String.fromCharCode(65 + currentPoseIndex);
+      poseProgress.innerText = `Capturing Slot ${slotLetter} (${currentPoseIndex + 1} of ${customSlots.length})`;
+    }
+
+    function triggerCountdownAndCapture() {
+      countdownOverlay.classList.remove('hidden');
+      
+      flashEffect.classList.remove('hidden', 'flash-overlay');
+      flashEffect.style.backgroundColor = 'rgba(255, 255, 255, 0.75)';
+
+      let count = 3;
+      countdownText.innerText = count;
+      playBeep(440, 150);
+
+      countdownTimer = setInterval(() => {
+        count--;
+        if (count > 0) {
+          countdownText.innerText = count;
+          playBeep(440, 150);
+          flashEffect.style.opacity = (count % 2 === 0) ? '0.85' : '0.5';
+        } else if (count === 0) {
+          countdownText.innerText = "SMILE!";
+          playBeep(880, 300);
+          flashEffect.style.opacity = '1';
+          flashEffect.style.backgroundColor = '#ffffff'; 
+        } else {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          countdownOverlay.classList.add('hidden');
+          flashEffect.style.opacity = '1';
+          flashEffect.style.backgroundColor = 'transparent';
+          flashEffect.classList.add('hidden');
+          executeCaptureCommand();
+        }
+      }, 1000);
+    }
+
+    function cancelCountdownSession() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      countdownOverlay.classList.add('hidden');
+      flashEffect.classList.add('hidden');
+      flashEffect.style.backgroundColor = 'transparent';
+      isCapturingSequence = false;
+      resetSession();
+    }
+
+    function executeCaptureCommand() {
+      flashEffect.classList.remove('hidden');
+      flashEffect.style.backgroundColor = '#ffffff';
+      flashEffect.style.opacity = '1';
+      void flashEffect.offsetWidth;
+      flashEffect.classList.add('flash-overlay');
+      
+      setTimeout(() => {
+        flashEffect.classList.remove('flash-overlay');
+        flashEffect.classList.add('hidden');
+        flashEffect.style.backgroundColor = 'transparent';
+      }, 400);
+
+      if (connectionMode === 'wireless' && dataConnection && dataConnection.open) {
+        dataConnection.send({ type: 'TRIGGER_HIGH_RES_CAPTURE' });
+      } else {
+        const canvas = document.createElement('canvas');
+        const vWidth = remoteVideo.videoWidth || 1920;
+        const vHeight = remoteVideo.videoHeight || 1080;
+        canvas.width = vWidth;
+        canvas.height = vHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(remoteVideo, 0, 0, vWidth, vHeight);
+        addCapturedPhoto(canvas.toDataURL('image/png', 1.0));
+      }
+    }
+
+    function addCapturedPhoto(base64Data) {
+      loadSavedFramingSettings();
+      
+      acceptedPhotos.push({
+        dataUrl: base64Data,
+        zoom: defaultZoom,
+        offsetX: undefined,
+        offsetY: undefined
+      });
+
+      currentPoseIndex++;
+      renderStripCanvas();
+
+      if (currentPoseIndex < customSlots.length) {
+        updatePoseIndicator();
+        triggerCountdownAndCapture();
+      } else {
+        isCapturingSequence = false;
+        poseProgress.innerText = "All Slots Filled!";
+        btnPrint.disabled = false;
+        btnDownload.disabled = false;
+        btnUploadDrive.disabled = false;
+      }
+    }
+
+    function resetSession() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      countdownOverlay.classList.add('hidden');
+      acceptedPhotos = [];
+      currentPoseIndex = 0;
+      isCapturingSequence = false;
+      poseProgress.innerText = customSlots.length > 0 ? `${customSlots.length} Slots Ready from Template` : "Upload template with green boxes";
+      if (isConnected && customSlots.length > 0) btnStartSession.disabled = false;
+      btnPrint.disabled = true;
+      btnDownload.disabled = true;
+      btnUploadDrive.disabled = true;
+      document.getElementById('driveStatusMsg').classList.add('hidden');
+      renderStripCanvas();
+    }
+
+    function initBlankCanvas() {
+      renderStripCanvas();
+    }
+
+    function renderStripCanvas() {
+      const stripWidth = currentCanvasConfig.width;
+      const stripHeight = currentCanvasConfig.height;
+      stripCanvas.width = stripWidth;
+      stripCanvas.height = stripHeight;
+
+      const ctx = stripCanvas.getContext('2d');
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, stripWidth, stripHeight);
+
+      if (customSlots.length === 0) {
+        if (customTemplateImage) {
+          ctx.drawImage(customTemplateImage, 0, 0, stripWidth, stripHeight);
+        } else {
+          ctx.fillStyle = '#64748b';
+          ctx.font = '22px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('Upload Template with Green Boxes', stripWidth / 2, stripHeight / 2);
+        }
+        return;
+      }
+
+      let renderPromises = customSlots.map((slot, idx) => {
+        return new Promise((resolve) => {
+          const photo = acceptedPhotos[idx];
+          const bleed = 6; 
+          const drawX = slot.x - bleed;
+          const drawY = slot.y - bleed;
+          const drawW = slot.w + (bleed * 2);
+          const drawH = slot.h + (bleed * 2);
+
+          if (photo) {
+            const img = new Image();
+            img.onload = () => {
+              photo._loadedWidth = img.width;
+              photo._loadedHeight = img.height;
+              drawFittedImage(ctx, img, drawX, drawY, drawW, drawH, photo);
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = photo.dataUrl;
+          } else {
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+            ctx.fillRect(drawX, drawY, drawW, drawH);
+            
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(drawX, drawY, drawW, drawH);
+            ctx.setLineDash([]);
+
+            ctx.fillStyle = '#059669';
+            ctx.font = 'bold 24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const slotLetter = String.fromCharCode(65 + idx);
+            ctx.fillText(`Slot ${slotLetter}`, drawX + drawW / 2, drawY + drawH / 2);
+            resolve();
+          }
+        });
+      });
+
+      Promise.all(renderPromises).then(() => {
+        if (customTemplateImage) {
+          ctx.drawImage(customTemplateImage, 0, 0, stripWidth, stripHeight);
+        } else {
+          const brandText = document.getElementById('brandingInput').value || "FlashBooth Pro";
+          drawStripFooter(ctx, stripWidth, stripHeight, brandText);
+        }
+      });
+    }
+
+    function drawFittedImage(ctx, img, x, y, targetW, targetH, photo) {
+      const zoom = photo.zoom || defaultZoom;
+      const imgAspect = img.width / img.height;
+      const targetAspect = targetW / targetH;
+      let baseSw, baseSh;
+
+      if (imgAspect > targetAspect) {
+        baseSh = img.height;
+        baseSw = img.height * targetAspect;
+      } else {
+        baseSw = img.width;
+        baseSh = img.width / targetAspect;
+      }
+
+      const sw = baseSw / zoom;
+      const sh = baseSh / zoom;
+
+      const maxSx = Math.max(0, img.width - sw);
+      const maxSy = Math.max(0, img.height - sh);
+
+      const paddingX = sw * 0.6;
+      const paddingY = sh * 0.6;
+
+      if (photo.offsetX === undefined) photo.offsetX = maxSx / 2;
+      if (photo.offsetY === undefined) photo.offsetY = maxSy / 2;
+
+      photo.offsetX = Math.max(-paddingX, Math.min(maxSx + paddingX, photo.offsetX));
+      photo.offsetY = Math.max(-paddingY, Math.min(maxSy + paddingY, photo.offsetY));
+
+      ctx.save();
+      ctx.filter = 'contrast(1.06) brightness(1.04) saturate(1.12)';
+      ctx.drawImage(img, photo.offsetX, photo.offsetY, sw, sh, x, y, targetW, targetH);
+      ctx.restore();
+    }
+
+    function drawStripFooter(ctx, width, height, brandText) {
+      const footerY = height - 70;
+      ctx.fillStyle = '#111827';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(brandText, width / 2, footerY);
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      ctx.fillStyle = '#374151';
+      ctx.font = '500 15px sans-serif';
+      ctx.fillText(dateStr, width / 2, footerY + 28);
+    }
+
+    function printStrip() {
+      if (acceptedPhotos.length < customSlots.length) return;
+      const dataUrl = stripCanvas.toDataURL('image/png', 1.0);
+
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Print Photo Strip - FlashBooth Pro</title>
+            <style>
+              @page {
+                size: auto;
+                margin: 0;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                width: 100vw;
+                height: 100vh;
+                background-color: white;
+              }
+              img {
+                width: 100%;
+                height: 100%;
+                object-fit: contain;
+              }
+            </style>
+          </head>
+          <body>
+            <img src="${dataUrl}" onload="window.print(); window.close();" />
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }
+
+    function downloadStrip() {
+      if (acceptedPhotos.length < customSlots.length) return;
+      const dataUrl = stripCanvas.toDataURL('image/png', 1.0);
+
+      const link = document.createElement('a');
+      link.download = makeFileName();
+      link.href = dataUrl;
+      link.click();
+    }
+
+    /* =====================================================================
+       GOOGLE DRIVE UPLOAD (runs fully in the browser — replaces uploadToDrive in Code.gs)
+       Uses Google Identity Services for sign-in and the Drive v3 REST API.
+       Scope "drive.file" = the app can only see files/folders it created itself.
+       ===================================================================== */
+
+    let driveTokenClient = null;
+    let driveAccessToken = null;
+    let driveTokenExpiry = 0;
+
+    function getDriveToken() {
+      return new Promise((resolve, reject) => {
+        if (driveAccessToken && Date.now() < driveTokenExpiry - 30000) {
+          return resolve(driveAccessToken);
+        }
+        if (!window.google || !google.accounts || !google.accounts.oauth2) {
+          return reject(new Error("Google sign-in library did not load. Check your internet connection."));
+        }
+
+        if (!driveTokenClient) {
+          driveTokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: GOOGLE_CLIENT_ID,
+            scope: 'https://www.googleapis.com/auth/drive.file',
+            callback: () => {}
+          });
+        }
+
+        driveTokenClient.callback = (resp) => {
+          if (resp.error) {
+            return reject(new Error(resp.error_description || resp.error));
+          }
+          driveAccessToken = resp.access_token;
+          driveTokenExpiry = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+          resolve(driveAccessToken);
+        };
+        driveTokenClient.error_callback = (err) => {
+          reject(new Error((err && (err.message || err.type)) || "Google sign-in was cancelled."));
+        };
+
+        driveTokenClient.requestAccessToken({ prompt: '' });
+      });
+    }
+
+    async function getOrCreateDriveFolder(token, folderName) {
+      const safeName = folderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const q = encodeURIComponent(`name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+
+      const listRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&spaces=drive`, {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      if (!listRes.ok) throw new Error(`Drive folder lookup failed (${listRes.status})`);
+      const listJson = await listRes.json();
+      if (listJson.files && listJson.files.length > 0) return listJson.files[0].id;
+
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      if (!createRes.ok) throw new Error(`Could not create Drive folder (${createRes.status})`);
+      const createJson = await createRes.json();
+      return createJson.id;
+    }
+
+    async function uploadToGoogleDrive() {
+      if (acceptedPhotos.length < customSlots.length) return;
+      if (!GOOGLE_CLIENT_ID) {
+        alert("Set GOOGLE_CLIENT_ID at the top of the script in index.html to enable Google Drive saving.");
+        return;
+      }
+
+      const statusMsg = document.getElementById('driveStatusMsg');
+      const setStatus = (cls, html) => {
+        statusMsg.className = "mt-3 text-xs text-center font-medium " + cls;
+        statusMsg.innerHTML = html;
+      };
+
+      setStatus("text-amber-400", `<i class="fa-solid fa-spinner animate-spin"></i> Signing in to Google...`);
+      btnUploadDrive.disabled = true;
+
+      const fileName = makeFileName();
+
+      try {
+        // Must be called straight from the click so the sign-in popup isn't blocked
+        const token = await getDriveToken();
+
+        setStatus("text-amber-400", `<i class="fa-solid fa-spinner animate-spin"></i> Saving to Google Drive...`);
+
+        const blob = await new Promise((resolve, reject) => {
+          stripCanvas.toBlob((b) => b ? resolve(b) : reject(new Error("Could not export the strip image.")), 'image/png');
+        });
+
+        const folderId = await getOrCreateDriveFolder(token, DRIVE_FOLDER_NAME);
+
+        const metadata = { name: fileName, mimeType: 'image/png', parents: [folderId] };
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+        form.append('file', blob);
+
+        const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+          body: form
+        });
+
+        if (!uploadRes.ok) {
+          const errText = await uploadRes.text();
+          throw new Error(`Upload failed (${uploadRes.status}): ${errText.slice(0, 120)}`);
+        }
+
+        const file = await uploadRes.json();
+        setStatus("text-emerald-400", `<i class="fa-solid fa-circle-check"></i> Saved! <a href="${file.webViewLink}" target="_blank" rel="noopener" class="underline">View File</a>`);
+      } catch (err) {
+        console.error("Drive upload error:", err);
+        setStatus("text-red-400", "Upload failed: " + (err && err.message ? err.message : err));
+      } finally {
+        btnUploadDrive.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
